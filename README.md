@@ -1,5 +1,7 @@
 # GraphQL Federation on GKE — A Hands-On Learning Guide
 
+> 💻 **Important Note for Readers:** The terminal commands, setup steps, and package managers (such as Homebrew) used throughout this tutorial are explicitly tailored for macOS. If you are running Windows or Linux, you will need to adjust your local environment setup and CLI installations accordingly.
+
 A complete guide to building and deploying an **Apollo Federation v2** GraphQL API on Google Kubernetes Engine (GKE), where two independent subgraphs — **Products** and **Reviews** — are composed into a single unified graph through an **Apollo Router**.
 
 ## What you will do
@@ -80,6 +82,26 @@ kubectl version --client
 gcloud version
 ```
 
+### 3.2 Install Rover CLI
+
+Rover is the Apollo command-line tool for working with your graph. Install it for your platform:
+
+```bash
+brew install apollographql/rover/rover
+```
+
+#### Verify Installation
+
+```bash
+rover --version
+```
+
+Expected output:
+
+```
+rover 0.2x.x (some hash)
+```
+
 ### Authenticate with Google Cloud
 
 1. Initialize the SDK and log in to your Google account:
@@ -110,7 +132,7 @@ If you do not already have a project, create one now:
 gcloud projects create federated-graph-demo --name="Federated Graph Demo"
 ```
 
-Enable billing and link it to your project using the Cloud Console if needed.
+Enable billing and link it to your project using the Cloud Console (https://console.cloud.google.com/) if needed.
 
 Set the active project:
 
@@ -123,6 +145,18 @@ gcloud config set project federated-graph-demo
 ```bash
 gcloud services enable container.googleapis.com
 ```
+
+### Clone the repository
+
+Clone the project repository from GitHub and navigate to the project folder:
+
+```bash
+git clone https://github.com/suneelkandali/gcp-gke-federated-graph-demo.git
+
+cd gcp-gke-federated-graph-demo
+```
+
+All subsequent commands in this tutorial should be executed from within the `gcp-gke-federated-graph-demo` directory.
 
 ---
 
@@ -222,54 +256,16 @@ extend type Product @key(fields: "id") {
 2. Click **New Graph** (or **Create a New Graph**).
 3. Choose **Federated** as the graph type.
 4. Give your graph a name (e.g., `My-Graph`) and select a **Deployment Region** close to your users.
+
+> ![Apollo GraphQL Studio - Create Graph option](screenshots/graphqlstudio-add-graph-option1.png)
+
 5. Apollo Studio will generate a **Graph API Key** for you. Copy it — you will need it shortly.
 6. Note your **Graph Reference** (also called `graph ref`), which has the format `Your-Graph-Name@current` (e.g., `My-Graph-9f5n9i@current`).
 
 > **Important:** Keep your API key safe. It grants access to publish schemas and view metrics for your graph. Do not commit it to source control.
 
-### 3.2 Install Rover CLI
 
-Rover is the Apollo command-line tool for working with your graph. Install it for your platform:
 
-#### macOS (Homebrew) — Recommended
-
-```bash
-brew install apollographql/rover/rover
-```
-
-#### macOS / Linux (Shell Script)
-
-```bash
-curl -sSL https://rover.apollo.dev/nix/latest | sh
-```
-
-After installation, add Rover to your `PATH` if prompted:
-
-```bash
-export PATH="$HOME/.rover/bin:$PATH"
-```
-
-You can add this line to your `~/.zshrc` or `~/.bashrc` to make it permanent.
-
-#### Windows (PowerShell)
-
-```powershell
-Invoke-WebRequest -Uri "https://rover.apollo.dev/win/latest" -OutFile rover.exe
-```
-
-Move `rover.exe` to a directory in your `PATH`, or add its location to your `PATH` environment variable.
-
-#### Verify Installation
-
-```bash
-rover --version
-```
-
-Expected output:
-
-```
-rover 0.2x.x (some hash)
-```
 
 ### 3.3 Authenticate Rover
 
@@ -285,7 +281,7 @@ Set your graph reference:
 export APOLLO_GRAPH_REF=YOUR_GRAPH_ID@current
 ```
 
-> **Tip:** Add these `export` lines to your `~/.zshrc` or `~/.bashrc` so they persist across terminal sessions. Alternatively, use a `.env` file and source it before running Rover commands.
+> **Tip:** Add these `export` lines to your `~/.zshrc` so they persist across terminal sessions. Alternatively, use a `.env` file and source it before running Rover commands.
 
 Verify Rover can connect to Apollo Studio:
 
@@ -302,112 +298,8 @@ Apollo Graph Studio
 └── Key Type: graph admin
 ```
 
-### 3.4 Publish Subgraph Schemas
-
-Before publishing, ensure your subgraphs are deployed and reachable. The `--routing-url` should point to the Kubernetes **service DNS name** (not the external IP), since Rover runs from within or near the cluster network.
-
-#### Publish the Products Subgraph
-
-```bash
-rover subgraph publish $APOLLO_GRAPH_REF \
-    --name products \
-    --schema ./subgraphs/products/schema.graphql \
-    --routing-url http://products-service:4001/
-```
-
-Expected output:
-
-```
-🚀 Subgraph schemas published to 'My-Graph-9f5n9i@current'
-  → Products subgraph: publish succeeded
-  → No new schema changes detected (already up to date)
-```
-
-#### Publish the Reviews Subgraph
-
-```bash
-rover subgraph publish $APOLLO_GRAPH_REF \
-    --name reviews \
-    --schema ./subgraphs/reviews/schema.graphql \
-    --routing-url http://reviews-service:4002/
-```
-
-After publishing both subgraphs, Apollo Studio will compose a supergraph schema and make it available to your Apollo Router.
-
-### 3.5 Check Schema Changes (Optional but Recommended)
-
-Before publishing, you can validate that your schema changes are compatible with the rest of the graph:
-
-```bash
-rover subgraph check $APOLLO_GRAPH_REF \
-    --name products \
-    --schema ./subgraphs/products/schema.graphql
-```
-
-This runs composition checks against the existing subgraphs in Apollo Studio and reports any breaking changes or composition errors.
-
-### 3.6 View Your Graph in Apollo Studio
-
-After publishing your subgraphs:
-
-1. Go to [https://studio.apollographql.com](https://studio.apollographql.com).
-2. Select your graph from the dashboard.
-3. You will see:
-   - **Schema** — The composed supergraph schema from both subgraphs.
-   - **Explorer** — A query builder for testing operations against your graph.
-   - **Metrics** — Performance data (once the router sends usage reports).
-   - **Checks** — History of schema change validations.
-
-### 3.7 Connect the Apollo Router to Apollo Studio
-
-The Apollo Router is already configured to report metrics to Apollo Studio via the environment variables in `k8s/router-deployment.yaml`:
-
-```yaml
-env:
-- name: APOLLO_KEY
-  value: "service:YOUR_GRAPH_ID:YOUR_KEY"
-- name: APOLLO_GRAPH_REF
-  value: "YOUR_GRAPH_ID@current"
-```
-
-Replace the placeholder values with your actual Apollo key and graph ref before deploying:
-
-```bash
-kubectl apply -f k8s/router-deployment.yaml
-```
-
-Once deployed, the router will:
-- **Fetch the composed supergraph schema** from Apollo Studio at startup.
-- **Report operation metrics** (latency, error rates, field usage) to Apollo Studio.
-- **Receive schema updates** automatically when you publish new subgraph schemas via Rover.
-
-### 3.8 Useful Rover Commands
-
-```bash
-# List all subgraphs in your graph
-rover subgraph list $APOLLO_GRAPH_REF
-
-# Get the composed supergraph schema
-rover supergraph fetch $APOLLO_GRAPH_REF
-
-# Get a subgraph's schema
-rover subgraph fetch $APOLLO_GRAPH_REF --name products
-
-# Check rover configuration
-rover config list
-```
-
-### 3.9 Quick Reference — Rover + Apollo Studio
-
-- **Install Rover (macOS/Linux):** `curl -sSL https://rover.apollo.dev/nix/latest | sh`
-- **Install Rover (macOS Homebrew):** `brew install apollographql/rover/rover`
-- **Verify identity:** `rover config whoami`
-- **Publish a subgraph:** `rover subgraph publish $APOLLO_GRAPH_REF --name NAME --schema PATH --routing-url URL`
-- **Check schema changes:** `rover subgraph check $APOLLO_GRAPH_REF --name NAME --schema PATH`
-- **List subgraphs:** `rover subgraph list $APOLLO_GRAPH_REF`
-- **View graph in browser:** Open [studio.apollographql.com](https://studio.apollographql.com)
-
 ---
+
 
 ## 4. Create the GKE cluster
 
@@ -481,7 +373,9 @@ gcloud config get-value project
 
 ## 6. Deploy to Kubernetes
 
-### Apply Manifests
+### Deploy Subgraphs
+
+Deploy the Products and Reviews subgraphs first:
 
 ```bash
 # Deploy products subgraph
@@ -489,7 +383,21 @@ kubectl apply -f k8s/products-deployment.yaml
 
 # Deploy reviews subgraph
 kubectl apply -f k8s/reviews-deployment.yaml
+```
 
+Wait for the subgraph pods to be running before proceeding:
+
+```bash
+kubectl get pods
+```
+
+Once the subgraphs are healthy, publish their schemas to Apollo Studio using Rover (see [Step 7.1 Publish Subgraph Schemas](#71-publish-subgraph-schemas)).
+
+### Deploy Apollo Router
+
+After publishing the subgraph schemas, deploy the Apollo Router:
+
+```bash
 # Deploy router
 kubectl apply -f k8s/router-deployment.yaml
 ```
@@ -539,11 +447,116 @@ kubectl get services
 
 ---
 
-## 7. Validate the deployment
+## 7. Publish Subgraph Schemas & Connect Apollo Studio
+
+### 7.1 Publish Subgraph Schemas
+
+The `--routing-url` should point to the Kubernetes **service DNS name** (not the external IP), since Rover runs from within or near the cluster network.
+
+#### Publish the Products Subgraph
+
+```bash
+rover subgraph publish $APOLLO_GRAPH_REF \
+    --name products \
+    --schema ./subgraphs/products/schema.graphql \
+    --routing-url http://products-service:4001/
+```
+
+Expected output:
+
+```
+🚀 Subgraph schemas published to 'My-Graph-9f5n9i@current'
+  → Products subgraph: publish succeeded
+  → No new schema changes detected (already up to date)
+```
+
+#### Publish the Reviews Subgraph
+
+```bash
+rover subgraph publish $APOLLO_GRAPH_REF \
+    --name reviews \
+    --schema ./subgraphs/reviews/schema.graphql \
+    --routing-url http://reviews-service:4002/
+```
+
+After publishing both subgraphs, Apollo Studio will compose a supergraph schema and make it available to your Apollo Router.
+
+### 7.2 Check Schema Changes (Optional but Recommended)
+
+Before publishing, you can validate that your schema changes are compatible with the rest of the graph:
+
+```bash
+rover subgraph check $APOLLO_GRAPH_REF \
+    --name products \
+    --schema ./subgraphs/products/schema.graphql
+```
+
+This runs composition checks against the existing subgraphs in Apollo Studio and reports any breaking changes or composition errors.
+
+### 7.3 View Your Graph in Apollo Studio
+
+After publishing your subgraphs:
+
+1. Go to [https://studio.apollographql.com](https://studio.apollographql.com).
+2. Select your graph from the dashboard.
+3. You will see:
+   - **Schema** — The composed supergraph schema from both subgraphs.
+   - **Explorer** — A query builder for testing operations against your graph.
+   - **Metrics** — Performance data (once the router sends usage reports).
+   - **Checks** — History of schema change validations.
+
+### 7.4 Connect the Apollo Router to Apollo Studio
+
+The Apollo Router is configured to report metrics to Apollo Studio via the environment variables in `k8s/router-deployment.yaml`:
+
+```yaml
+env:
+- name: APOLLO_KEY
+  value: "service:YOUR_GRAPH_ID:YOUR_KEY"
+- name: APOLLO_GRAPH_REF
+  value: "YOUR_GRAPH_ID@current"
+```
+
+Replace the placeholder values with your actual Apollo key and graph ref before deploying the router.
+
+Once deployed, the router will:
+- **Fetch the composed supergraph schema** from Apollo Studio at startup.
+- **Report operation metrics** (latency, error rates, field usage) to Apollo Studio.
+- **Receive schema updates** automatically when you publish new subgraph schemas via Rover.
+
+### 7.5 Useful Rover Commands
+
+```bash
+# List all subgraphs in your graph
+rover subgraph list $APOLLO_GRAPH_REF
+
+# Get the composed supergraph schema
+rover supergraph fetch $APOLLO_GRAPH_REF
+
+# Get a subgraph's schema
+rover subgraph fetch $APOLLO_GRAPH_REF --name products
+
+# Check rover configuration
+rover config list
+```
+
+### 7.6 Quick Reference — Rover + Apollo Studio
+
+- **Install Rover (macOS/Linux):** `curl -sSL https://rover.apollo.dev/nix/latest | sh`
+- **Install Rover (macOS Homebrew):** `brew install apollographql/rover/rover`
+- **Verify identity:** `rover config whoami`
+- **Publish a subgraph:** `rover subgraph publish $APOLLO_GRAPH_REF --name NAME --schema PATH --routing-url URL`
+- **Check schema changes:** `rover subgraph check $APOLLO_GRAPH_REF --name NAME --schema PATH`
+- **List subgraphs:** `rover subgraph list $APOLLO_GRAPH_REF`
+- **View graph in browser:** Open [studio.apollographql.com](https://studio.apollographql.com)
+
+---
+
+## 8. Validate the deployment
 
 After the workflow completes, confirm the federated GraphQL API is working correctly.
 
-### 7.1 Check pods and services
+### 8.1 Check pods and services
 
 Verify that all deployments are running and services are available:
 
@@ -554,7 +567,7 @@ kubectl get services
 
 All pods should show `STATUS = Running` and the `router-service` should have an external IP.
 
-### 7.2 Test with cURL
+### 8.2 Test with cURL
 
 #### Query All Products with Reviews (Federated Query)
 
@@ -660,7 +673,7 @@ curl -X POST \
 >   http://EXTERNAL_IP | jq .
 > ```
 
-### 7.3 Test with Apollo Sandbox
+### 8.3 Test with Apollo Sandbox
 
 [Apollo Sandbox](https://studio.apollographql.com/sandbox) is a free, browser-based GraphQL IDE that provides auto-completion, schema documentation, and a query builder — making it ideal for exploring your federated graph.
 
@@ -726,7 +739,7 @@ query GetFederatedProducts {
 }
 ```
 
-3. Click the **Run** button (▶️) or press `Cmd+Enter` (Mac) / `Ctrl+Enter` (Linux/Windows).
+3. Click the **Run** button (▶️) or press `Cmd+Enter`.
 4. The response appears in the right pane, showing data from both subgraphs merged into a single response.
 
 > **Screenshot:** Writing and running a federated query
@@ -763,7 +776,7 @@ query GetProduct {
 - **Headers** — Click **Headers** to add custom HTTP headers (e.g., authentication tokens)
 - **Schema Docs** — Click any type or field in the schema to see its documentation
 
-### 7.4 Quick Verification Checklist
+### 8.4 Quick Verification Checklist
 
 Use this checklist to confirm everything is working:
 
@@ -791,7 +804,7 @@ curl -s -X POST \
 
 ---
 
-## 10. Troubleshooting
+## 9. Troubleshooting
 
 ### ImagePullBackOff / ErrImagePull
 
@@ -842,7 +855,7 @@ docker buildx build --provenance=false --sbom=false \
 
 ---
 
-## 11. Clean up resources
+## 10. Clean up resources
 
 When you are done, delete the GKE cluster:
 
