@@ -275,12 +275,16 @@ Set your Apollo API key as an environment variable. Replace `service:YOUR_GRAPH_
 
 ```bash
 export APOLLO_KEY=service:YOUR_GRAPH_ID:YOUR_KEY
+
+Example - export APOLLO_KEY=service:federated-graph-demo-suneelkandali:xxxxxxxxxxxxxxxx
 ```
 
 Set your graph reference:
 
 ```bash
 export APOLLO_GRAPH_REF=YOUR_GRAPH_ID@current
+
+Example - export APOLLO_GRAPH_REF=federated-graph-demo-suneelkandali@current
 ```
 
 > **Tip:** Add these `export` lines to your `~/.zshrc` so they persist across terminal sessions. Alternatively, use a `.env` file and source it before running Rover commands.
