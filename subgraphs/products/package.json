@@ -1,0 +1,14 @@
+{
+  "name": "subgraph-products",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "@apollo/server": "^4.11.0",
+    "@apollo/subgraph": "^2.7.0",
+    "graphql": "^16.9.0",
+    "graphql-tag": "^2.12.6"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
