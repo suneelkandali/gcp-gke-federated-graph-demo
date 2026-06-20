@@ -1,15 +1,142 @@
 # GraphQL Federation on GKE — A Hands-On Learning Guide
 
-A hands-on tutorial for learning how **Apollo Federation v2** and **GraphQL Subgraphs** work together. This project walks you through building a federated GraphQL API deployed on Google Kubernetes Engine (GKE), where two independent subgraphs — **Products** and **Reviews** — are composed into a single unified graph through an **Apollo Router**.
+A complete guide to building and deploying an **Apollo Federation v2** GraphQL API on Google Kubernetes Engine (GKE), where two independent subgraphs — **Products** and **Reviews** — are composed into a single unified graph through an **Apollo Router**.
 
-**What you'll learn:**
+## What you will do
 
-- How GraphQL Federation splits a schema across multiple services (subgraphs)
-- How the `@key` and `@external` directives enable cross-service entity resolution
-- How the Apollo Router composes subgraph schemas into a single federated endpoint
-- How to deploy, test, and verify a federated graph on GKE
+1. Install local tools 
+2. Understand how GraphQL Federation splits a schema across multiple services.
+3. Setup Apollo Studio for Federated graph
+4. Authenticate Google Cloud
+5. Create new project in Google cloud
+6. Create a GKE cluster and connect `kubectl`.
+7. Build and push Docker images for each subgraph to Google Container Registry (GCR).
+8. Deploy the Products subgraph, Reviews subgraph, and Apollo Router to GKE.
+9. Verify the federated GraphQL API with cURL and Apollo Sandbox.
+10. Troubleshoot common issues.
+11. Clean up resources when finished.
 
-## Architecture
+---
+
+## 1. Prerequisites
+
+You need the following installed on your computer:
+- `gcloud`
+- `kubectl`
+- `docker` with [Buildx](https://docs.docker.com/buildx/working-with-buildx/)
+- `rover`
+- A GCP project with billing enabled
+
+If you do not already have the required tools installed, follow these steps.
+
+### Verify installed tools
+
+Check that the required commands are already available before installing:
+
+```bash
+docker version
+kubectl version --client
+gcloud version
+rover --version
+```
+
+If any command fails, install the missing tool using the instructions below.
+
+### Install Docker
+
+Download Docker Desktop for your platform from:
+https://www.docker.com/get-started
+
+After installation, verify Docker is running:
+
+```bash
+docker version
+```
+
+### Install kubectl
+
+Follow the instructions at:
+https://kubernetes.io/docs/tasks/tools/
+
+For macOS with Homebrew:
+
+```bash
+brew install kubectl
+```
+
+Verify installation:
+
+```bash
+kubectl version --client
+```
+
+### Install Google Cloud SDK
+
+1. Download and install the SDK for your platform from:
+   https://cloud.google.com/sdk/docs/install
+2. Confirm the SDK is installed and working:
+
+```bash
+gcloud version
+```
+
+### Authenticate with Google Cloud
+
+1. Initialize the SDK and log in to your Google account:
+
+```bash
+gcloud init
+```
+
+2. Authenticate with your Google account:
+
+```bash
+gcloud auth login
+```
+
+3. Verify the active account and current configuration:
+
+```bash
+gcloud auth list
+
+gcloud config list
+```
+
+### Create a Google Cloud project
+
+If you do not already have a project, create one now:
+
+```bash
+gcloud projects create federated-graph-demo --name="Federated Graph Demo"
+```
+
+Enable billing and link it to your project using the Cloud Console if needed.
+
+Set the active project:
+
+```bash
+gcloud config set project federated-graph-demo
+```
+
+### Enable required APIs
+
+```bash
+gcloud services enable container.googleapis.com
+```
+
+---
+
+## 2. Understand the Architecture
+
+This project demonstrates **Apollo Federation v2**, a pattern for building a single GraphQL API from multiple independent services (called **subgraphs**). An **Apollo Router** sits in front of the subgraphs and composes their schemas into a single unified endpoint.
+
+### How Federation Works
+
+- The **Products subgraph** owns the `Product` type and defines base fields (`id`, `name`, `price`).
+- The **Reviews subgraph** extends the `Product` type by adding a `reviews` field, using the `@key` and `@external` directives to reference the Product entity.
+- The **Apollo Router** queries both subgraphs and merges the results into a single response.
+
+### Architecture Diagram
 
 ```
                     ┌──────────────┐
@@ -25,76 +152,7 @@ A hands-on tutorial for learning how **Apollo Federation v2** and **GraphQL Subg
      └─────────────────┘      └──────────────────┘
 ```
 
-## Prerequisites
-
-- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud` CLI)
-- [Docker](https://docs.docker.com/get-docker/) with [Buildx](https://docs.docker.com/buildx/working-with-buildx/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-- A GCP project with billing enabled
-
-## Dynamic Values Reference
-
-Throughout this guide, you'll see placeholder values like `YOUR_PROJECT_ID` and `EXTERNAL_IP`. Use the commands below to obtain these values and set them as environment variables for convenience.
-
-### Get Your GCP Project ID
-
-```bash
-# Option 1: Get from gcloud config (if you've run `gcloud init`)
-gcloud config get-value project
-
-# Option 2: List all projects you have access to
-gcloud projects list
-
-# Option 3: Get the project number (sometimes needed)
-gcloud projects describe YOUR_PROJECT_ID --format="value(projectNumber)"
-```
-
-Set it as an environment variable:
-
-```bash
-export PROJECT_ID=$(gcloud config get-value project)
-echo "Your project ID: $PROJECT_ID"
-```
-
-### Get the Router External IP
-
-After deploying the router service (see [Deploy to Kubernetes](#deploy-to-kubernetes)), retrieve the external IP:
-
-```bash
-# Option 1: One-liner to extract just the IP
-export EXTERNAL_IP=$(kubectl get service router-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "Router endpoint: http://$EXTERNAL_IP"
-
-# Option 2: View the full service details
-kubectl get service router-service
-
-# Option 3: Watch for the IP to be provisioned (runs until IP appears)
-kubectl get service router-service --watch
-```
-
-> **Note:** It may take 1-2 minutes for the external IP to be provisioned after deploying. If the IP shows `<pending>`, wait and run the command again.
-
-### Get Your GCP Zone and Region
-
-```bash
-# Get your currently configured zone
-gcloud config get-value compute/zone
-
-# Get your currently configured region
-gcloud config get-value compute/region
-
-# List all available zones in a region
-gcloud compute zones list --filter="region:us-central1"
-```
-
-### Summary of Variables
-
-- **`PROJECT_ID`** — Your GCP project ID (e.g., `my-federation-demo`). Use `gcloud config get-value project` to retrieve it.
-- **`EXTERNAL_IP`** — The public IP of the Apollo Router. Use `kubectl get service router-service` to retrieve it after deployment.
-- **`ZONE`** — The GCP zone where your GKE cluster runs (e.g., `us-central1-a`). Use `gcloud config get-value compute/zone` to retrieve it.
-- **`CLUSTER_NAME`** — Your GKE cluster name (e.g., `federation-demo-cluster`). Use `gcloud container clusters list` to retrieve it.
-
-## Project Structure
+### Project Structure
 
 ```
 gcp-gke-federated-graph-demo/
@@ -104,52 +162,266 @@ gcp-gke-federated-graph-demo/
 │   │   ├── package.json
 │   │   ├── index.js
 │   │   └── schema.graphql
-│   ├── reviews/
-│   │   ├── Dockerfile
-│   │   ├── package.json
-│   │   ├── index.js
-│   │   └── schema.graphql
-│   └── router/
-│       └── ...
+│   └── reviews/
+│       ├── Dockerfile
+│       ├── package.json
+│       ├── index.js
+│       └── schema.graphql
 ├── k8s/
 │   ├── products-deployment.yaml
 │   ├── reviews-deployment.yaml
 │   └── router-deployment.yaml
 ├── screenshots/
-│   ├── 01-apollo-sandbox-landing.png
-│   ├── 02-connect-endpoint.png
-│   ├── 03-schema-explorer.png
-│   ├── 04-execute-query.png
-│   └── 05-single-product-query.png
+│   └── README.md
 └── README.md
 ```
 
-## Setup
+### Products Subgraph Schema
 
-### 1. GCP Project & CLI Setup
+```graphql
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key"])
 
-```bash
-# Initialize gcloud and select/create a project
-gcloud init
+type Product @key(fields: "id") {
+  id: ID!
+  name: String!
+  price: Float!
+}
 
-# Update gcloud components
-gcloud components update
-
-# Enable required APIs
-gcloud services enable container.googleapis.com
+type Query {
+  products: [Product!]!
+  product(id: ID!): Product
+}
 ```
 
-### 2. Create GKE Cluster
+### Reviews Subgraph Schema
+
+```graphql
+extend schema @link(url: "https://specs.apollo.dev/federation/v2.7", import: ["@key", "@external"])
+
+type Review {
+  id: ID!
+  rating: Int!
+  comment: String!
+}
+
+extend type Product @key(fields: "id") {
+  id: ID! @external
+  reviews: [Review!]!
+}
+```
+
+---
+
+## 3. Setup Apollo Studio for Federated graph
+
+[Apollo Studio](https://studio.apollographql.com) is a cloud-based GraphQL platform that provides schema registry, performance metrics, operation tracking, and schema change validation for your federated graph. [Rover](https://www.apollographql.com/docs/rover/) is the official Apollo CLI used to publish and check your subgraph schemas against Apollo Studio.
+
+### 3.1 Create an Apollo Studio Graph
+
+1. Go to [https://studio.apollographql.com](https://studio.apollographql.com) and sign up or log in.
+2. Click **New Graph** (or **Create a New Graph**).
+3. Choose **Federated** as the graph type.
+4. Give your graph a name (e.g., `My-Graph`) and select a **Deployment Region** close to your users.
+5. Apollo Studio will generate a **Graph API Key** for you. Copy it — you will need it shortly.
+6. Note your **Graph Reference** (also called `graph ref`), which has the format `Your-Graph-Name@current` (e.g., `My-Graph-9f5n9i@current`).
+
+> **Important:** Keep your API key safe. It grants access to publish schemas and view metrics for your graph. Do not commit it to source control.
+
+### 3.2 Install Rover CLI
+
+Rover is the Apollo command-line tool for working with your graph. Install it for your platform:
+
+#### macOS (Homebrew) — Recommended
+
+```bash
+brew install apollographql/rover/rover
+```
+
+#### macOS / Linux (Shell Script)
+
+```bash
+curl -sSL https://rover.apollo.dev/nix/latest | sh
+```
+
+After installation, add Rover to your `PATH` if prompted:
+
+```bash
+export PATH="$HOME/.rover/bin:$PATH"
+```
+
+You can add this line to your `~/.zshrc` or `~/.bashrc` to make it permanent.
+
+#### Windows (PowerShell)
+
+```powershell
+Invoke-WebRequest -Uri "https://rover.apollo.dev/win/latest" -OutFile rover.exe
+```
+
+Move `rover.exe` to a directory in your `PATH`, or add its location to your `PATH` environment variable.
+
+#### Verify Installation
+
+```bash
+rover --version
+```
+
+Expected output:
+
+```
+rover 0.2x.x (some hash)
+```
+
+### 3.3 Authenticate Rover
+
+Set your Apollo API key as an environment variable. Replace `service:YOUR_GRAPH_ID:YOUR_KEY` with the key you copied from Apollo Studio:
+
+```bash
+export APOLLO_KEY=service:YOUR_GRAPH_ID:YOUR_KEY
+```
+
+Set your graph reference:
+
+```bash
+export APOLLO_GRAPH_REF=YOUR_GRAPH_ID@current
+```
+
+> **Tip:** Add these `export` lines to your `~/.zshrc` or `~/.bashrc` so they persist across terminal sessions. Alternatively, use a `.env` file and source it before running Rover commands.
+
+Verify Rover can connect to Apollo Studio:
+
+```bash
+rover config whoami
+```
+
+Expected output:
+
+```
+Apollo Graph Studio
+├── Graph Name: My-Graph
+├── Graph ID: YOUR_GRAPH_ID
+└── Key Type: graph admin
+```
+
+### 3.4 Publish Subgraph Schemas
+
+Before publishing, ensure your subgraphs are deployed and reachable. The `--routing-url` should point to the Kubernetes **service DNS name** (not the external IP), since Rover runs from within or near the cluster network.
+
+#### Publish the Products Subgraph
+
+```bash
+rover subgraph publish $APOLLO_GRAPH_REF \
+    --name products \
+    --schema ./subgraphs/products/schema.graphql \
+    --routing-url http://products-service:4001/
+```
+
+Expected output:
+
+```
+🚀 Subgraph schemas published to 'My-Graph-9f5n9i@current'
+  → Products subgraph: publish succeeded
+  → No new schema changes detected (already up to date)
+```
+
+#### Publish the Reviews Subgraph
+
+```bash
+rover subgraph publish $APOLLO_GRAPH_REF \
+    --name reviews \
+    --schema ./subgraphs/reviews/schema.graphql \
+    --routing-url http://reviews-service:4002/
+```
+
+After publishing both subgraphs, Apollo Studio will compose a supergraph schema and make it available to your Apollo Router.
+
+### 3.5 Check Schema Changes (Optional but Recommended)
+
+Before publishing, you can validate that your schema changes are compatible with the rest of the graph:
+
+```bash
+rover subgraph check $APOLLO_GRAPH_REF \
+    --name products \
+    --schema ./subgraphs/products/schema.graphql
+```
+
+This runs composition checks against the existing subgraphs in Apollo Studio and reports any breaking changes or composition errors.
+
+### 3.6 View Your Graph in Apollo Studio
+
+After publishing your subgraphs:
+
+1. Go to [https://studio.apollographql.com](https://studio.apollographql.com).
+2. Select your graph from the dashboard.
+3. You will see:
+   - **Schema** — The composed supergraph schema from both subgraphs.
+   - **Explorer** — A query builder for testing operations against your graph.
+   - **Metrics** — Performance data (once the router sends usage reports).
+   - **Checks** — History of schema change validations.
+
+### 3.7 Connect the Apollo Router to Apollo Studio
+
+The Apollo Router is already configured to report metrics to Apollo Studio via the environment variables in `k8s/router-deployment.yaml`:
+
+```yaml
+env:
+- name: APOLLO_KEY
+  value: "service:YOUR_GRAPH_ID:YOUR_KEY"
+- name: APOLLO_GRAPH_REF
+  value: "YOUR_GRAPH_ID@current"
+```
+
+Replace the placeholder values with your actual Apollo key and graph ref before deploying:
+
+```bash
+kubectl apply -f k8s/router-deployment.yaml
+```
+
+Once deployed, the router will:
+- **Fetch the composed supergraph schema** from Apollo Studio at startup.
+- **Report operation metrics** (latency, error rates, field usage) to Apollo Studio.
+- **Receive schema updates** automatically when you publish new subgraph schemas via Rover.
+
+### 3.8 Useful Rover Commands
+
+```bash
+# List all subgraphs in your graph
+rover subgraph list $APOLLO_GRAPH_REF
+
+# Get the composed supergraph schema
+rover supergraph fetch $APOLLO_GRAPH_REF
+
+# Get a subgraph's schema
+rover subgraph fetch $APOLLO_GRAPH_REF --name products
+
+# Check rover configuration
+rover config list
+```
+
+### 3.9 Quick Reference — Rover + Apollo Studio
+
+- **Install Rover (macOS/Linux):** `curl -sSL https://rover.apollo.dev/nix/latest | sh`
+- **Install Rover (macOS Homebrew):** `brew install apollographql/rover/rover`
+- **Verify identity:** `rover config whoami`
+- **Publish a subgraph:** `rover subgraph publish $APOLLO_GRAPH_REF --name NAME --schema PATH --routing-url URL`
+- **Check schema changes:** `rover subgraph check $APOLLO_GRAPH_REF --name NAME --schema PATH`
+- **List subgraphs:** `rover subgraph list $APOLLO_GRAPH_REF`
+- **View graph in browser:** Open [studio.apollographql.com](https://studio.apollographql.com)
+
+---
+
+## 4. Create the GKE cluster
+
+Run these commands in your terminal:
 
 ```bash
 gcloud container clusters create federation-demo-cluster \
-    --num-nodes=2 \
-    --zone=us-central1-a \
-    --machine-type=e2-standard-2 \
-    --release-channel=regular
+  --zone us-central1-a \
+  --num-nodes=2 \
+  --machine-type=e2-standard-2 \
+  --release-channel=regular
 ```
 
-### 3. Configure kubectl
+Then connect `kubectl` to the cluster:
 
 ```bash
 # Install GKE auth plugin
@@ -157,15 +429,17 @@ gcloud components install gke-gcloud-auth-plugin
 
 # Get cluster credentials
 gcloud container clusters get-credentials federation-demo-cluster \
-    --zone us-central1-a
+  --zone us-central1-a
 
 # Verify connection
 kubectl config current-context
 ```
 
-## Build & Push Docker Images
+---
 
-> **Important:** When building on macOS (Apple Silicon/ARM), you **must** specify `--platform linux/amd64` because GKE nodes run on AMD64 architecture. Building without this flag will result in `ImagePullBackOff` errors with the message `no match for platform in manifest: not found`.
+## 5. Build & Push Docker Images
+
+> **Important:** When building on macOS (Apple Silicon/ARM), you **must** specify `--platform linux/amd64` because GKE nodes run on AMD64 architecture. Building without this flag will result in `ImagePullBackOff` errors.
 
 ### Configure Docker for GCR
 
@@ -197,7 +471,15 @@ docker buildx build --no-cache \
     --push .
 ```
 
-## Deploy to Kubernetes
+Replace `YOUR_PROJECT_ID` with your actual GCP project ID. You can retrieve it with:
+
+```bash
+gcloud config get-value project
+```
+
+---
+
+## 6. Deploy to Kubernetes
 
 ### Apply Manifests
 
@@ -208,8 +490,31 @@ kubectl apply -f k8s/products-deployment.yaml
 # Deploy reviews subgraph
 kubectl apply -f k8s/reviews-deployment.yaml
 
-# Deploy router (if applicable)
+# Deploy router
 kubectl apply -f k8s/router-deployment.yaml
+```
+
+### Get the Router External IP
+
+The Apollo Router is exposed via a `LoadBalancer` service. Retrieve its external IP:
+
+```bash
+kubectl get service router-service
+```
+
+Expected output:
+
+```
+NAME            TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)        AGE
+router-service  LoadBalancer   10.x.x.x       34.67.230.190   80:3xxxx/TCP   5m
+```
+
+> **Note:** It may take 1-2 minutes for the external IP to be provisioned. Wait until the `EXTERNAL-IP` column shows an IP address instead of `<pending>`.
+
+You can watch for the IP to appear:
+
+```bash
+kubectl get service router-service --watch
 ```
 
 ### Verify Deployment
@@ -232,39 +537,26 @@ kubectl get deployments
 kubectl get services
 ```
 
-### Update Image on Existing Deployment
+---
+
+## 7. Validate the deployment
+
+After the workflow completes, confirm the federated GraphQL API is working correctly.
+
+### 7.1 Check pods and services
+
+Verify that all deployments are running and services are available:
 
 ```bash
-kubectl set image deployment/products-deployment \
-    products=gcr.io/YOUR_PROJECT_ID/subgraph-products:NEW_TAG
-
-kubectl set image deployment/reviews-deployment \
-    reviews=gcr.io/YOUR_PROJECT_ID/subgraph-reviews:NEW_TAG
+kubectl get pods
+kubectl get services
 ```
 
-## Verify GraphQL Federation
+All pods should show `STATUS = Running` and the `router-service` should have an external IP.
 
-After deploying all services, verify that the federated GraphQL API is working correctly.
+### 7.2 Test with cURL
 
-### Get the Router External IP
-
-The Apollo Router is exposed via a `LoadBalancer` service. Retrieve its external IP:
-
-```bash
-kubectl get service router-service
-```
-
-Expected output:
-```
-NAME            TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)        AGE
-router-service  LoadBalancer   10.x.x.x       34.67.230.190   80:3xxxx/TCP   5m
-```
-
-> **Note:** It may take 1-2 minutes for the external IP to be provisioned. Wait until the `EXTERNAL-IP` column shows an IP address instead of `<pending>`.
-
-### Test with cURL
-
-#### 1. Query All Products with Reviews (Federated Query)
+#### Query All Products with Reviews (Federated Query)
 
 This query demonstrates Apollo Federation by fetching `Product` fields from the **Products** subgraph and `Review` fields from the **Reviews** subgraph in a single request:
 
@@ -292,25 +584,30 @@ curl -X POST \
     "products": [
       {
         "id": "1",
-        "name": "Laptop",
-        "price": 999.99,
+        "name": "Enterprise Database Tool",
+        "price": 299.99,
         "reviews": [
           {
             "id": "101",
             "rating": 5,
-            "comment": "Excellent laptop!"
+            "comment": "Essential tool for system metrics!"
+          },
+          {
+            "id": "102",
+            "rating": 4,
+            "comment": "Great UI, needs minor bug fixes."
           }
         ]
       },
       {
         "id": "2",
-        "name": "Headphones",
-        "price": 149.99,
+        "name": "Cloud Log Aggregator Plugin",
+        "price": 49.99,
         "reviews": [
           {
-            "id": "102",
-            "rating": 4,
-            "comment": "Great sound quality"
+            "id": "103",
+            "rating": 5,
+            "comment": "Flawless integration with Splunk/Docker."
           }
         ]
       }
@@ -319,7 +616,7 @@ curl -X POST \
 }
 ```
 
-#### 2. Query a Single Product by ID
+#### Query a Single Product by ID
 
 ```bash
 curl -X POST \
@@ -328,7 +625,7 @@ curl -X POST \
   http://EXTERNAL_IP
 ```
 
-#### 3. Query Only Products (No Reviews)
+#### Query Only Products (No Reviews)
 
 ```bash
 curl -X POST \
@@ -337,7 +634,7 @@ curl -X POST \
   http://EXTERNAL_IP
 ```
 
-#### 4. Using a Variable Query
+#### Using a Variable Query
 
 ```bash
 curl -X POST \
@@ -346,7 +643,7 @@ curl -X POST \
   http://EXTERNAL_IP
 ```
 
-#### 5. Introspection Query (Verify Schema)
+#### Introspection Query (Verify Schema)
 
 ```bash
 curl -X POST \
@@ -355,7 +652,7 @@ curl -X POST \
   http://EXTERNAL_IP
 ```
 
-> **Tip:** You can also pipe the response through `jq` for formatted output:
+> **Tip:** You can pipe the response through `jq` for formatted output:
 > ```bash
 > curl -s -X POST \
 >   -H "Content-Type: application/json" \
@@ -363,9 +660,7 @@ curl -X POST \
 >   http://EXTERNAL_IP | jq .
 > ```
 
----
-
-### Test with GraphQL Studio (Apollo Sandbox)
+### 7.3 Test with Apollo Sandbox
 
 [Apollo Sandbox](https://studio.apollographql.com/sandbox) is a free, browser-based GraphQL IDE that provides auto-completion, schema documentation, and a query builder — making it ideal for exploring your federated graph.
 
@@ -467,11 +762,8 @@ query GetProduct {
 - **Variables** — Use the **Variables** tab below the query editor to pass dynamic values
 - **Headers** — Click **Headers** to add custom HTTP headers (e.g., authentication tokens)
 - **Schema Docs** — Click any type or field in the schema to see its documentation
-- **Operation Links** — Share query results by clicking **Share** in the response pane
 
----
-
-### Quick Verification Checklist
+### 7.4 Quick Verification Checklist
 
 Use this checklist to confirm everything is working:
 
@@ -496,31 +788,10 @@ curl -s -X POST \
 # Enter your router URL and verify schema loads
 ```
 
-## Useful Commands
 
-```bash
-# View pod logs
-kubectl logs <pod-name>
+---
 
-# View logs for a specific app
-kubectl logs -l app=products
-kubectl logs -l app=reviews
-
-# Describe a pod for debugging
-kubectl describe pod <pod-name>
-
-# Delete all pods (they will be recreated by ReplicaSets)
-kubectl delete pods --all
-
-# Rollout status
-kubectl rollout status deployment/products-deployment
-kubectl rollout status deployment/reviews-deployment
-
-# Scale deployment
-kubectl scale deployment/products-deployment --replicas=3
-```
-
-## Troubleshooting
+## 10. Troubleshooting
 
 ### ImagePullBackOff / ErrImagePull
 
@@ -569,28 +840,46 @@ docker buildx build --provenance=false --sbom=false \
     --platform linux/amd64 -t gcr.io/PROJECT_ID/IMAGE:TAG --push .
 ```
 
-## Apollo Studio (Optional)
+---
 
-To connect to Apollo Studio for schema monitoring:
+## 11. Clean up resources
+
+When you are done, delete the GKE cluster:
 
 ```bash
-# Install Apollo Rover CLI
-curl -sSL https://rover.apollo.dev/nix/latest | sh
+gcloud container clusters delete federation-demo-cluster --zone us-central1-a
+```
 
-# Set your Apollo key
-export APOLLO_KEY=service:YOUR_GRAPH_ID:YOUR_KEY
+You can also remove the Docker images from GCR if desired:
 
-# Set your graph ref
-export GRAPH_REF=YOUR_GRAPH_ID@current
+```bash
+gcloud container images delete gcr.io/YOUR_PROJECT_ID/subgraph-products:1.0.3 --quiet
+gcloud container images delete gcr.io/YOUR_PROJECT_ID/subgraph-reviews:1.0.3 --quiet
+```
 
-# Publish products subgraph schema (run from project root)
-rover subgraph publish $GRAPH_REF \
-    --name products \
-    --schema ./subgraphs/products/schema.graphql \
-    --routing-url http://products-service:4001/
+---
 
-# Publish reviews subgraph schema (run from project root)
-rover subgraph publish $GRAPH_REF \
-    --name reviews \
-    --schema ./subgraphs/reviews/schema.graphql \
-    --routing-url http://reviews-service:4002/
+## Useful Commands
+
+```bash
+# View pod logs
+kubectl logs <pod-name>
+
+# View logs for a specific app
+kubectl logs -l app=products
+kubectl logs -l app=reviews
+
+# Describe a pod for debugging
+kubectl describe pod <pod-name>
+
+# Delete all pods (they will be recreated by ReplicaSets)
+kubectl delete pods --all
+
+# Rollout status
+kubectl rollout status deployment/products-deployment
+kubectl rollout status deployment/reviews-deployment
+
+# Scale deployment
+kubectl scale deployment/products-deployment --replicas=3
+```
+
