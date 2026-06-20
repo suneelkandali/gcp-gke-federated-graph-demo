@@ -253,19 +253,21 @@ extend type Product @key(fields: "id") {
 ### 3.1 Create an Apollo Studio Graph
 
 1. Go to [https://studio.apollographql.com](https://studio.apollographql.com) and sign up or log in.
+
+> ![Apollo GraphQL Studio - Create Graph option](screenshots/graphqlstudio-add-graph-option.png)
+
 2. Click **New Graph** (or **Create a New Graph**).
 3. Choose **Federated** as the graph type.
 4. Give your graph a name (e.g., `My-Graph`) and select a **Deployment Region** close to your users.
 
-> ![Apollo GraphQL Studio - Create Graph option](screenshots/graphqlstudio-add-graph-option1.png)
+> ![Apollo GraphQL Studio - Add Graph](screenshots/graphqlstudio-add-graph-option1.png)
 
 5. Apollo Studio will generate a **Graph API Key** for you. Copy it — you will need it shortly.
 6. Note your **Graph Reference** (also called `graph ref`), which has the format `Your-Graph-Name@current` (e.g., `My-Graph-9f5n9i@current`).
 
+> ![Apollo GraphQL Studio - Graph config details](screenshots/graphqlstudio-add-graph-option2.png)
+
 > **Important:** Keep your API key safe. It grants access to publish schemas and view metrics for your graph. Do not commit it to source control.
-
-
-
 
 ### 3.3 Authenticate Rover
 
@@ -298,6 +300,8 @@ Apollo Graph Studio
 └── Key Type: graph admin
 ```
 
+
+> ![Rover - Graph config display](screenshots/rover-graph-details.png)
 ---
 
 
