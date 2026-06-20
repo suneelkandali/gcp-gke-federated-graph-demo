@@ -1,0 +1,54 @@
+# Dependencies
+**/node_modules/
+
+# Environment files
+**/.env
+**/.env.*
+!.env.example
+
+# Logs
+**/*.log
+**/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+._*
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build output
+**/dist/
+**/build/
+**/.cache/
+
+# Coverage
+**/coverage/
+**/.nyc_output/
+
+# Temporary files
+**/tmp/
+**/temp/
+*.tmp
+
+# Apollo Studio / Rover
+**/.apollo/
+
+# Terraform
+**/*.tfstate
+**/*.tfstate.backup
+**/.terraform/
+**/*.tfvars
+
+# Kubernetes - sensitive configs (keep manifests, ignore secrets)
+**/kubeconfig
+**/kubeconfig.*
